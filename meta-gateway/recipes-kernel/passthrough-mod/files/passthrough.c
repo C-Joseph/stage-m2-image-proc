@@ -89,20 +89,13 @@ struct passthrough_instance {
 	struct clk *clk;
 	int irq_base;
 	u32 irq_enable;
-	//struct irq_domain *irq_domain;
 };
 
 //static struct lock_class_key hls_ip_lock_class;//Used in irq_setup()
 
-static irqreturn_t passthrough_irqhandler(int irq, void *dev_id)//struct irq_desc *desc)
+static irqreturn_t passthrough_irqhandler(int irq, void *dev_id)
 {
-	/*u32 temp;
-	struct passthrough_instance *HLS_IP;
-	HLS_IP = (struct passthrough_instance *)irq_get_handler_data(irq);
-	//Get ISR
-	temp = passthrough_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_ISR);
-	pr_info("ISR value = %d\n", temp);*/
-	//pr_info("Interrupt!\n", temp);
+	pr_info("Interrupt triggered!\n");
 	return IRQ_HANDLED;
 }
 
@@ -163,14 +156,13 @@ static irqreturn_t passthrough_irqhandler(int irq, void *dev_id)//struct irq_des
 static int passthrough_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
-	//module_put(THIS_MODULE);
 	printk("Removing...\n");
 	return 0;
 }
 
 static int passthrough_probe(struct platform_device *pdev)
 {
-	int irq; //u32 temp;
+	int irq; u32 tmp;
 	struct device_node *np;
 	struct passthrough_instance *HLS_IP;
 	int status;
@@ -191,7 +183,6 @@ static int passthrough_probe(struct platform_device *pdev)
 	//----------------------Set device data------------------------------
 	of_property_read_u32(np, "xlnx,s-axi-control-bus-addr-width", &HLS_IP->ctrl_bus_bus_addr_width);
 	of_property_read_u32(np, "xlnx,s-axi-control-bus-data-width", &HLS_IP->ctrl_bus_bus_data_width);
-	//HLS_IP->ctrl_bus_base_address = PASSTHROUGH_CONTROL_BUS_BASE_ADDR;
 	HLS_IP->DeviceId = 0;
 	HLS_IP->IsReady = XIL_COMPONENT_IS_READY;
 	
@@ -221,58 +212,51 @@ static int passthrough_probe(struct platform_device *pdev)
 	if (status < 0)
 		goto err_unprepare_clk;
 	//Set up memory to allow device access, map physical memory into virtual address space
-	printk("Mapping physical memory ...");
+	printk("Mapping physical memory ...\n");
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	HLS_IP->ctrl_bus_base_address = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(HLS_IP->ctrl_bus_base_address)){
 		dev_err(&pdev->dev, "Could not map physical memory  to virtual memory for passthrough device\n");
 		return PTR_ERR(HLS_IP->ctrl_bus_base_address);
 	}
-	else printk("Physical memory mapped to virtual memory for pasthrough");
+	else printk("Physical memory mapped to virtual memory for pasthrough\n");
 
-//--------------------------------
-	//spin_lock_init(&HLS_IP->passthrough_lock);
-	
-	//chip->irq_enable &= ~BIT(offset);
-
-	//if (!HLS_IP->irq_enable) {
-		// Enable per channel interrupt
-	/*	temp = passthrough_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_IER);
-		temp &= 1;
-		passthrough_writereg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_IER, temp);
-	pr_info("ISR value = %d\n", temp);*/
-
-		/* Disable global interrupt if channel interrupts are unused */
-		/*temp = xgpio_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_IER);
-		if (!temp)
-			xgpio_writereg(HLS_IP->ctrl_bus_base_address + XGPIO_GIER_OFFSET,
-				       ~XGPIO_GIER_IE);*/
-
-	//}
-//-------------------------------------------
-	//------------Interrupts-----------
+	//------------Interrupts------------------------
 	irq = platform_get_irq(pdev, 0);
 	pr_alert("Interrupt number: %d\n", irq);
 	printk("Device name: %s\n", dev_name(&pdev->dev));
 	
 	//devm_request_irq(struct device *dev, unsigned int irq, irq_handler_t handler, unsigned long irqflags, const char *devname, void *dev_id)
-	//rc = devm_request_irq(&pdev->dev, irq, passthrough_irqhandler, irqflags, dev_name(&pdev->dev), HLS_IP);
-	//if(rc){dev_err(dev, "Failed to register IRQ\n"); return -ENODEV;}
-
 	status= devm_request_irq(&pdev->dev, irq, &passthrough_irqhandler, IRQF_SHARED, dev_name(&pdev->dev), HLS_IP);
 	//status = passthrough_irq_setup(np, HLS_IP);
-	//iowrite32(0x1, PASSTHROUGH_CONTROL_BUS_BASE_ADDR);
 	if (status) {
-		pr_err("%s: Passthrough HLS IP IRQ initialization failed %d\n",
+		pr_err("%s: Passthrough HLS IP IRQ registration failed %d\n",
 		       np->full_name, status);
 		goto err_pm_put;
-	}
-	//HLS_IP->irq_enable=1;
-	
+	}	
 
-	//-------------------------------
 	pr_info("Passthrough: %s: registered\n", np->full_name);
+	//-------------------------------
+	tmp=passthrough_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_IER);
+	pr_info("Passthrough interrupt enable register value: %d\n",tmp);
+	tmp = passthrough_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_ISR);
+	pr_info("ISR value = %d\n", tmp);
 
+	pr_info("Enabling auto restart...\n");
+	passthrough_writereg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_AP_CTRL, 0x80);
+
+	pr_info("Enabling global interrupt...\n");
+	passthrough_writereg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_GIE, 0x1);
+	pr_info("Start device...\n");
+	tmp=(passthrough_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_AP_CTRL)) & 0x80;
+	passthrough_writereg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_AP_CTRL, tmp|0x1);
+
+	tmp=passthrough_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_IER);
+	pr_info("Passthrough interrupt enable register value: %d\n",tmp);
+	tmp = passthrough_readreg(HLS_IP->ctrl_bus_base_address + PASSTHROUGH_CONTROL_BUS_ADDR_ISR);
+	pr_info("ISR value = %d\n", tmp);
+	//for(i=0; i<13, i++
+	//-------------------------------
 	pm_runtime_put(&pdev->dev);
 	return 0;
 
@@ -303,7 +287,6 @@ static struct platform_driver passthrough_driver = {
 static int __init passthrough_init(void)
 {	printk("Initialising module\n");
 	return(platform_driver_register(&passthrough_driver));
-	//return 0;
 }
 
 static void __exit passthrough_exit(void)
