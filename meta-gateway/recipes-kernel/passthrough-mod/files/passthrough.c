@@ -137,19 +137,20 @@ static struct file_operations passthrough_fops = {
 
 static int cdevice_init(struct passthrough_instance *HLS_IP)
 {
-	int rc;
+	int status;
 	char device_name[32] = "passthrough";
-	static struct class *local_class_passthrough = NULL;
 	struct device *subdev;
+	
+	status=0;
 
 	/* Allocate a character device from the kernel for this driver.
 	 */
-	rc = alloc_chrdev_region(&HLS_IP->dev_node, 0, 1, "passthrough");
+	status = alloc_chrdev_region(&HLS_IP->dev_node, 0, 1, "passthrough");
 
-	if (rc) {
-		//dev_err(HLS_IP, "unable to get a char device number\n");
-		pr_err("unable to get a char device number\n");
-		return rc;
+	if (status) {
+		dev_err(HLS_IP->passthrough_device, "unable to get a char device number\n");
+		//pr_err("unable to get a char device number\n");
+		return status;
 	}
 
 	/* Initialize the device data structure before registering the character 
@@ -157,32 +158,33 @@ static int cdevice_init(struct passthrough_instance *HLS_IP)
 	 */
 	cdev_init(&HLS_IP->cdev, &passthrough_fops);
 	HLS_IP->cdev.owner = THIS_MODULE;
-	rc = cdev_add(&HLS_IP->cdev, HLS_IP->dev_node, 1);
+	status = cdev_add(&HLS_IP->cdev, HLS_IP->dev_node, 1);
 
-	if (rc) {
+	if (status) {
 		dev_err(HLS_IP->passthrough_device, "unable to add char device\n");
 		goto init_error1;
 	}
-
+	
+	pr_info("Creating passthrough class...\n");
 	/* Only one class in sysfs is to be created for multiple channels,
 	 * create the device in sysfs which will allow the device node
 	 * in /dev to be created
 	 */
-	if (!local_class_passthrough) {
-		local_class_passthrough = class_create(THIS_MODULE, DRIVER_NAME);
+	HLS_IP->class_passthrough = class_create(THIS_MODULE, DRIVER_NAME);
+	pr_info("class_create function called...\n");
 
-		if (IS_ERR(HLS_IP->passthrough_device->class)) {
-			dev_err(HLS_IP->passthrough_device, "unable to create class\n");
-			rc = -1;
-			goto init_error2;
-		}
+	if (IS_ERR(HLS_IP->class_passthrough)) {
+		dev_err(HLS_IP->passthrough_device, "unable to create class\n");
+		status = -1;
+		goto init_error2;
 	}
-	HLS_IP->class_passthrough = local_class_passthrough;
+	pr_info("Initialising passthrough class...\n");
 
 	/* Create the device node in /dev so the device is accessible
 	 * as a character device
 	 */
 	//strcat(device_name, name);
+	//struct device *device_create(struct class *class, struct device *parent, dev_t devt, void *drvdata, const char *fmt, ...)
 	subdev = device_create(HLS_IP->class_passthrough, HLS_IP->passthrough_device,
 					  	 HLS_IP->dev_node, NULL, device_name);
 
@@ -201,7 +203,7 @@ init_error2:
 
 init_error1:
 	unregister_chrdev_region(HLS_IP->dev_node, 1);
-	return rc;
+	return status;
 }
 
 /* Exit the character device by freeing up the resources that it created and
